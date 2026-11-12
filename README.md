@@ -1,51 +1,107 @@
+# status-light
 
-# Goal
+A desk-side status indicator that mirrors a Home Assistant controlled "do not disturb" lamp, built from an ESP32 board, an RGB LED, and the smart button that already drives the lamp.
 
-My Wife works as a Psych NP and meets with clients in her office. I have had the tendency of walking in and asking odd questions in weird accents. Everyone finds it funny but its very inappropriate so there had to be a way to alert everyone that she cant be disturbed. We got a nice little RGB lamp outside of her office that's key'd to a button through home assistant and it works perfectly. Only problem is she cant see what color it is so shell leave it on RED all day.
+<p align="center">
+  <img src="assets/Button1.jpeg" width="260" alt="Finished build: XIAO ESP32-C6 and RGB LED mounted on the smart button">
+</p>
+
+## Problem
+
+An RGB lamp outside a home office shows whether the occupant can be disturbed. The lamp is set from a wireless smart button through Home Assistant automations (single press, double press, long press). The person pressing the button cannot see the lamp from the desk, so the status is easily left on the wrong colour.
 
 ## Solution
 
-I thought having a small cube of light on her desk that's the same as the lamp outside would be a perfect solution. I found nothing and anything that was even remotely close was very expensive and still very large. I figured it cant be that hard to make what i want. I got to jerry rigging and came up with an esp32 (what i had on hand) and a RGB led diode and a button. wrote a circuit python script that would use the exact same functions as the button in Home Assistant. 
+A small microcontroller is wired to the smart button's own switch contact. It decodes the same press gestures that Home Assistant acts on and lights a local RGB LED in the corresponding colour, so the desk indicator and the lamp outside the room stay in step.
 
-# requirements 
+The firmware does not talk to Home Assistant over the network. Synchronisation comes from both systems reading the same physical button: Home Assistant receives the press from the smart button and sets the lamp, while the ESP32 reads the shared contact and sets the LED.
 
-- ESP32 Board
-- Push Button connected to GPIO 0 (or any preferred GPIO)
-    - I used the button attached to the other switch
-- RGB LED connected to GPIOs 2, 3, and 4  (or any preferred GPIOs)
-- [CircutPython Firmware Installed](https://learn.adafruit.com/circuitpython-with-esp32-quick-start/web-serial-esptool)
+## Hardware
 
-# GPIO pinout
+| Part | Notes |
+|---|---|
+| Seeed Studio XIAO ESP32-C6 | Any CircuitPython-capable board works; adjust the pin names in the code |
+| RGB LED (common cathode) | One GPIO per colour channel, driven active-high; a current-limiting resistor per channel is recommended |
+| Wireless smart button | The button already paired with Home Assistant; its switch contact is tapped as the input |
+| Hook-up wire, heat shrink | |
 
-- Single Press - Blue LED (D4)
-- Long Press (800ms+) - Green LED (D3)
-- Double Tap (within 500ms) - Red LED (D2)
+### Wiring
 
-<p align=center>
-<img src=assets/pinout.png width=500>
+| Board pin | Connects to |
+|---|---|
+| `D0` | Smart button switch contact (input, internal pull-up, active low) |
+| `D2` | LED red channel |
+| `D3` | LED green channel |
+| `D4` | LED blue channel |
+| `GND` | LED common cathode and smart button ground |
+| `3V3` | Smart button 3 V rail |
+
+<p align="center">
+  <img src="assets/pinout.png" width="500" alt="XIAO ESP32-C6 pinout">
 </p>
 
-After I breadboarded the controller and LED, i started to think about form factor. At fist i thought i would just use a button and have it wedged in-between the HA button and the ESP32, then i figured "the HA button as a button in it, why not just steal that signal". After soldering a line and checking polarity, i figured id go one step farther and also just steal the battery (at this point i wondered if i should actually just make the ESP32 board itself be the button for both as it could support Matter and Zigbee. project for another day), this......worked......but not really. 
-<p align=center>
-In this image, I wired the postive and negative incorrect
+The ESP32 and the smart button share a ground so that the button's contact pulls `D0` low when pressed. Verify the polarity of the button's contacts with a multimeter before soldering.
+
+## Firmware
+
+The firmware is a single CircuitPython script, [`Src/Code.py`](Src/Code.py), using only the built-in `board`, `digitalio`, and `time` modules.
+
+| Gesture | Detection | LED colour |
+|---|---|---|
+| Single press | Released in under 0.8 s, no second press within 0.25 s | Green |
+| Double press | Second press within 0.25 s of the first release | Red |
+| Long press | Held for 0.8 s or longer | Blue |
+
+The LED is off at power-up and holds the last selected colour until the next gesture. To change the colour mapping so that it matches a different set of Home Assistant automations, edit the `set_color(r, g, b)` calls in `detect_button_press()` and `check_double_tap()`.
+
+### Installation
+
+1. Install CircuitPython on the board, following Adafruit's [CircuitPython on ESP32 quick start](https://learn.adafruit.com/circuitpython-with-esp32-quick-start/web-serial-esptool).
+2. Copy `Src/Code.py` to the board as `code.py`.
+3. If a different board or pin assignment is used, update the four pin constants at the top of the script.
+4. Reset the board. The script runs automatically.
+
+## Home Assistant integration
+
+Home Assistant needs no extra configuration for the indicator itself. The existing setup is:
+
+- the smart button paired with Home Assistant, and
+- one automation per gesture (single, double, long press) that sets the lamp to a colour.
+
+Keep the firmware's gesture-to-colour table aligned with those automations. Because the indicator tracks button presses rather than lamp state, a colour change made from the Home Assistant UI or another automation is not reflected on the desk LED.
+
+## Build notes
+
+The first prototype was breadboarded with a separate push button. The final version removes that button and solders three leads (3 V, GND, and the switch signal on `D0`) to the smart button's circuit board instead, so one press drives both systems.
+
+<p align="center">
+  <img src="assets/CircutBoard.jpeg" width="420" alt="Leads soldered to the smart button circuit board">
 </p>
-<p align=center>
-<img src=assets/CircutBoard.jpeg width=500>
-</p>
-the 3V the battery was outputting wasn't enough to support everything. the ESP32 would work but couldn't pass enough to actually light the LED like i wanted. 
 
+<p align="center"><em>Early wiring attempt; the positive and negative leads are reversed in this photo.</em></p>
 
+Running the whole assembly from the smart button's 3 V coin cell was also tested. The ESP32 booted, but the cell could not supply enough current to drive the LED at the intended brightness, so the coin cell is not a suitable sole power source; power the board over USB-C for full brightness.
 
-So i attached the 3v, GND, and D0 to the board of the HA button. verified everything worked, stuck it back together and now i have a functional button that also shows the color of the lamp at her desk. Its not perfect but for spending about 2-3 hours between soldering, programming, and testing, id consider it a success! I will (maybe/hopefully) return to this to make a more professional version with a light diffuser and just have the entire object 
-<p align=center>
-<img src=assets/Button1.jpeg width=200>
-  <img src=assets/Button2.jpeg width=200>
-  <img src=assets/Button3.jpeg width=200>
+<p align="center">
+  <img src="assets/Button2.jpeg" width="200" alt="Assembled unit">
+  <img src="assets/Button3.jpeg" width="200" alt="Assembled unit, alternate view">
 </p>
 
-<p align=center>
-<img src=assets/Blue.jpeg width=200>
-  <img src=assets/Red.jpeg width=200>
-  <img src=assets/Green.jpeg width=200>
+<p align="center">
+  <img src="assets/Blue.jpeg" width="200" alt="LED showing blue">
+  <img src="assets/Red.jpeg" width="200" alt="LED showing red">
+  <img src="assets/Green.jpeg" width="200" alt="LED showing green">
 </p>
 
+## Limitations and possible improvements
+
+- The indicator follows button gestures, not the lamp's actual state. Subscribing to the lamp entity over Wi-Fi (for example with ESPHome or MQTT) would make it authoritative.
+- The XIAO ESP32-C6 supports Zigbee and Thread, so the board could replace the smart button entirely.
+- The LED is bare; an enclosure with a diffuser would improve visibility and durability.
+
+## Project structure
+
+```
+Src/Code.py    CircuitPython firmware
+assets/        Pinout diagram and build photos
+```
